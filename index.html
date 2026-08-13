@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tindeq Progressor - Custom Web App & Diagnostic Tool</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Header & Mode Switcher -->
+        <header class="app-header">
+            <div class="brand">
+                <div class="brand-text">
+                    <h1>Tindeq Progressor</h1>
+                    <p class="subtitle">Custom Force Telemetry & Diagnostic Suite</p>
+                </div>
+            </div>
+
+            <div class="header-controls">
+                <!-- Driver Selector -->
+                <div class="mode-selector" title="Selecciona si deseas usar el hardware BLE real o el simulador de software">
+                    <label for="driverModeSelect">Modo de Operación:</label>
+                    <select id="driverModeSelect" class="styled-select">
+                        <option value="mock">Simulador (Modo Dev sin dispositivo)</option>
+                        <option value="ble">Hardware Real (Filtro Tindeq)</option>
+                        <option value="ble-any">Hardware Real (Escanear Cualquier Dispositivo BLE: Teléfonos, Relojes, etc.)</option>
+                    </select>
+                </div>
+
+                <!-- Connection Pill -->
+                <div id="statusPill" class="status-pill disconnected">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Desconectado</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <main class="dashboard-grid">
+            
+            <!-- Sidebar / Control Bar -->
+            <aside class="control-panel">
+                <h2 class="section-title">Panel de Control</h2>
+                
+                <div class="button-group">
+                    <button id="btnConnect" class="btn btn-primary btn-large">
+                        <span id="btnConnectText">Conectar Tindeq</span>
+                    </button>
+                    
+                    <button id="btnTare" class="btn btn-secondary" disabled>
+                        Tarar (Cero)
+                    </button>
+
+                    <div class="measurement-toggle-group">
+                        <button id="btnStart" class="btn btn-success btn-large" disabled>
+                            Iniciar Medición
+                        </button>
+                        <button id="btnStop" class="btn btn-danger btn-large hidden">
+                            Detener Medición
+                        </button>
+                    </div>
+
+                    <!-- Self Test Button -->
+                    <button id="btnSelfTest" class="btn btn-outline-info" disabled title="Ejecuta una verificación automática en 5 segundos (Firmware, Batería, Tara y Muestreo)">
+                        Diagnóstico Automático (Self-Test)
+                    </button>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Device Info Box -->
+                <div class="device-info-card">
+                    <h3 class="card-subtitle">Información del Dispositivo</h3>
+                    <div class="info-row">
+                        <span>Dispositivo:</span>
+                        <strong id="infoDeviceName">--</strong>
+                    </div>
+                    <div class="info-row">
+                        <span>Firmware:</span>
+                        <strong id="infoFirmware">--</strong>
+                    </div>
+                    <div class="info-row">
+                        <span>Batería:</span>
+                        <div class="battery-meter">
+                            <div id="batteryFill" class="battery-fill" style="width: 0%;"></div>
+                            <span id="infoBatteryText">--% (-- mV)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <!-- Data & Utilities -->
+                <div class="utility-actions">
+                    <button id="btnExportCsv" class="btn btn-outline" disabled>
+                        Exportar CSV / JSON
+                    </button>
+                    <button id="btnSleep" class="btn btn-outline-warning" disabled>
+                        Modo Reposo (Sleep)
+                    </button>
+                    <button id="btnClearChart" class="btn btn-outline-ghost">
+                        Limpiar Gráfica
+                    </button>
+                </div>
+
+                <!-- Edge Case Testing Section (dev mode) -->
+                <div id="edgeCasePanel" class="edge-case-panel">
+                    <h4 class="card-subtitle">Simulador de Edge Cases (Dev)</h4>
+                    <div class="edge-buttons">
+                        <button id="btnSimulateDisconnect" class="btn-xs btn-outline-danger">Simular Desconexión</button>
+                        <button id="btnSimulateSpike" class="btn-xs btn-outline-warning">Inyectar Pico 125kg</button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content Area: Metrics & Live Force Chart -->
+            <section class="main-content">
+                
+                <!-- Live Metric Cards Grid -->
+                <div class="metrics-grid">
+                    
+                    <div class="metric-card highlight-cyan">
+                        <div class="metric-label">FUERZA ACTUAL</div>
+                        <div class="metric-value">
+                            <span id="valCurrentKg">0.0</span>
+                            <span class="metric-unit">kg</span>
+                        </div>
+                        <div class="metric-secondary">
+                            <span id="valCurrentN">0.0</span> N
+                        </div>
+                    </div>
+
+                    <div class="metric-card highlight-red">
+                        <div class="metric-label">FUERZA MÁXIMA (PICO)</div>
+                        <div class="metric-value">
+                            <span id="valPeakKg">0.0</span>
+                            <span class="metric-unit">kg</span>
+                        </div>
+                        <div class="metric-secondary">
+                            <span id="valPeakN">0.0</span> N
+                        </div>
+                    </div>
+
+                    <div class="metric-card highlight-amber">
+                        <div class="metric-label">RFD (EXPLOSIVIDAD 100ms)</div>
+                        <div class="metric-value">
+                            <span id="valRfd">0</span>
+                            <span class="metric-unit">kg/s</span>
+                        </div>
+                        <div class="metric-secondary">Rate of Force Dev.</div>
+                    </div>
+
+                    <div class="metric-card highlight-green">
+                        <div class="metric-label">FRECUENCIA DE MUESTREO</div>
+                        <div class="metric-value">
+                            <span id="valHz">0</span>
+                            <span class="metric-unit">Hz</span>
+                        </div>
+                        <div class="metric-secondary">Muestras / seg</div>
+                    </div>
+
+                </div>
+
+                <!-- Force Chart Canvas Container -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>Telemetría de Fuerza en Tiempo Real</h3>
+                        <div class="chart-badges">
+                            <span class="badge badge-live">EN VIVO (80 Hz)</span>
+                        </div>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="forceCanvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Live Diagnostic Console (Essential for testing blind!) -->
+                <div class="console-card">
+                    <div class="console-header">
+                        <div class="console-title">
+                            <span>Consola de Diagnóstico BLE en Vivo</span>
+                            <span class="console-hint">(Ideal para verificar eventos a distancia)</span>
+                        </div>
+                        <div class="console-actions">
+                            <button id="btnCopyLog" class="btn-sm btn-ghost">Copiar Log</button>
+                            <button id="btnClearLog" class="btn-sm btn-ghost">Limpiar</button>
+                        </div>
+                    </div>
+                    <div id="logConsole" class="console-body">
+                        <div class="log-entry info">
+                            <span class="log-time">[00:00:00]</span> Sistema listo. Selecciona el modo y presiona Conectar.
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+        </main>
+    </div>
+
+    <!-- Main JS Bundle entry point -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

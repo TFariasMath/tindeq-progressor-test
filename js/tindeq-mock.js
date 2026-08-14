@@ -1,13 +1,14 @@
 /**
  * Tindeq Progressor Hardware Simulator (Mock Driver - Extended Edge Cases)
  * Emulates the physical Tindeq BLE sensor for development without hardware.
- * Supports Edge Cases stress testing (disconnects, low battery, spikes, self-test).
+ * Supports Edge Cases stress testing (disconnects, low battery, spikes, self-test, tracer).
  */
 
 export class TindeqMockDriver {
     constructor() {
         this.isConnected = false;
         this.isMeasuring = false;
+        this.tracer = null; // Assigned by orchestrator
 
         this.onLog = null;
         this.onStatusChange = null;
@@ -29,8 +30,6 @@ export class TindeqMockDriver {
 
         this.pullTargetKg = 42.5;
         this.noiseMagnitude = 0.15;
-
-        // Edge Cases flags
         this.simulateExtremeSpike = false;
     }
 
@@ -48,8 +47,20 @@ export class TindeqMockDriver {
     }
 
     async connect() {
+        if (this.tracer) this.tracer.setStepStatus(1, 'success', 'Simulador Dev');
+        if (this.tracer) this.tracer.setStepStatus(2, 'running');
+
         this.log("Conectando al sensor Tindeq SIMULADO...", "info");
-        await new Promise(r => setTimeout(r, 400));
+        await new Promise(r => setTimeout(r, 200));
+
+        if (this.tracer) this.tracer.setStepStatus(2, 'success', this.targetDeviceName);
+        if (this.tracer) this.tracer.setStepStatus(3, 'running');
+        await new Promise(r => setTimeout(r, 150));
+
+        if (this.tracer) this.tracer.setStepStatus(3, 'success');
+        if (this.tracer) this.tracer.setStepStatus(4, 'success');
+        if (this.tracer) this.tracer.setStepStatus(5, 'success');
+        if (this.tracer) this.tracer.setStepStatus(6, 'running');
 
         this.isConnected = true;
         this.log(`Dispositivo simulado conectado: "${this.targetDeviceName}"`, "success");
@@ -60,6 +71,7 @@ export class TindeqMockDriver {
 
         await this.getFirmwareVersion();
         await this.getBatteryVoltage();
+        if (this.tracer) this.tracer.setStepStatus(6, 'success');
     }
 
     async disconnect() {
@@ -81,7 +93,13 @@ export class TindeqMockDriver {
         if (!this.isConnected) throw new Error("Simulador no conectado.");
         if (this.isMeasuring) return;
 
+        if (this.tracer) this.tracer.setStepStatus(7, 'running');
         this.log("Iniciando streaming continuo a ~80 Hz (Modo Simulador)", "success");
+        await new Promise(r => setTimeout(r, 100));
+
+        if (this.tracer) this.tracer.setStepStatus(7, 'success');
+        if (this.tracer) this.tracer.setStepStatus(8, 'running');
+
         this.isMeasuring = true;
         this.currentMicroseconds = 0;
 
@@ -101,6 +119,10 @@ export class TindeqMockDriver {
         }
         this.isMeasuring = false;
         this.log("Medición continua detenida.", "info");
+
+        if (this.tracer && this.tracer.stepState[8].status === 'running') {
+            this.tracer.setStepStatus(8, 'success', 'Finalizado');
+        }
 
         if (this.onStatusChange) {
             this.onStatusChange({ connected: true, measuring: false, deviceName: this.targetDeviceName });
@@ -151,12 +173,12 @@ export class TindeqMockDriver {
         return true;
     }
 
-    // Trigger Edge Case scenarios manually for UI stress testing
     triggerUnexpectedDisconnect() {
         this.log("INYECTANDO EDGE CASE: Desconexión abrupta de señal BLE...", "error");
         if (this.timerId) clearInterval(this.timerId);
         this.isConnected = false;
         this.isMeasuring = false;
+        if (this.tracer) this.tracer.setStepStatus(3, 'fail', 'Señal caída');
         if (this.onDisconnected) this.onDisconnected();
     }
 
@@ -201,6 +223,9 @@ export class TindeqMockDriver {
         }
 
         if (this.onWeightData) {
+            if (this.tracer && this.tracer.stepState[8].status === 'running') {
+                this.tracer.setStepStatus(8, 'success', '80 Hz Simulado');
+            }
             this.onWeightData(samples);
         }
     }

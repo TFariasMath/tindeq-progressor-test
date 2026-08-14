@@ -43,6 +43,19 @@
             </div>
         </header>
 
+        <!-- BLE Process Stepper Timeline Widget -->
+        <section class="stepper-section">
+            <div class="stepper-header">
+                <h3>Rastreador de Procesos en Tiempo Real (BLE Step-Tracer)</h3>
+                <button id="btnDownloadDiagnosticJson" class="btn-sm btn-ghost" title="Descargar informe completo JSON con la traza de todos los pasos">
+                    Descargar Informe de Traza (JSON)
+                </button>
+            </div>
+            <div id="stepperGrid" class="stepper-grid">
+                <!-- 8 Dynamic Step Cards will render here -->
+            </div>
+        </section>
+
         <!-- Main Dashboard Grid -->
         <main class="dashboard-grid">
             
@@ -101,7 +114,7 @@
                 <!-- Data & Utilities -->
                 <div class="utility-actions">
                     <button id="btnExportCsv" class="btn btn-outline" disabled>
-                        Exportar CSV / JSON
+                        Exportar CSV
                     </button>
                     <button id="btnSleep" class="btn btn-outline-warning" disabled>
                         Modo Reposo (Sleep)

@@ -2,7 +2,7 @@
  * Tindeq Progressor BLE Hardware Driver (Hardened & Universal BLE Version)
  * Handles Web Bluetooth API connection, GATT service discovery, TLV parsing,
  * dynamic write fallback, resilient filters, race-condition protection,
- * universal BLE device scanning (Phones, Watches, Sensors), and automated self-tests.
+ * process tracer step emissions, universal BLE device scanning, and automated self-tests.
  */
 
 export const TINDEQ_UUIDS = Object.freeze({
@@ -48,6 +48,8 @@ export class TindeqBleDriver {
         this.isGenericDevice = false;
         this.hasLoggedFirstSample = false;
 
+        this.tracer = null; // Assigned by orchestrator
+
         // Callback listeners
         this.onLog = null;
         this.onStatusChange = null;
@@ -80,9 +82,15 @@ export class TindeqBleDriver {
      * @param {boolean} acceptAllDevices If true, allows scanning any nearby BLE peripheral (phones, watches, headphones)
      */
     async connect(acceptAllDevices = false) {
+        if (this.tracer) this.tracer.setStepStatus(1, 'running');
+
         if (!TindeqBleDriver.isSupported()) {
+            if (this.tracer) this.tracer.setStepStatus(1, 'fail', 'Web Bluetooth no soportado');
             throw new Error("Web Bluetooth API no está soportada en este navegador. Utiliza Google Chrome o Microsoft Edge sobre HTTPS o localhost.");
         }
+
+        if (this.tracer) this.tracer.setStepStatus(1, 'success');
+        if (this.tracer) this.tracer.setStepStatus(2, 'running');
 
         this.log(`Iniciando escaneo BLE (${acceptAllDevices ? 'Todos los dispositivos cercanos' : 'Filtro Tindeq'})...`, "info");
         
@@ -112,11 +120,18 @@ export class TindeqBleDriver {
                 });
             }
 
+            if (this.tracer) this.tracer.setStepStatus(2, 'success', this.device.name || 'Dispositivo BLE');
+            if (this.tracer) this.tracer.setStepStatus(3, 'running');
+
             this.log(`Dispositivo seleccionado: "${this.device.name || 'Dispositivo BLE sin nombre'}" (ID: ${this.device.id})`, "success");
             this.device.addEventListener('gattserverdisconnected', this._boundHandleDisconnect);
 
             this.log("Conectando al servidor GATT del dispositivo...", "info");
             this.server = await this.device.gatt.connect();
+            
+            if (this.tracer) this.tracer.setStepStatus(3, 'success');
+            if (this.tracer) this.tracer.setStepStatus(4, 'running');
+
             this.log("Servidor GATT conectado con éxito.", "success");
 
             // Inspect available services on the connected device
@@ -128,6 +143,11 @@ export class TindeqBleDriver {
             }
 
         } catch (error) {
+            if (this.tracer) {
+                if (this.tracer.stepState[2].status === 'running') this.tracer.setStepStatus(2, 'fail', error.message);
+                else if (this.tracer.stepState[3].status === 'running') this.tracer.setStepStatus(3, 'fail', error.message);
+                else if (this.tracer.stepState[4].status === 'running') this.tracer.setStepStatus(4, 'fail', error.message);
+            }
             this.log(`Fallo durante la conexión BLE: ${error.message}`, "error");
             await this.disconnect();
             throw error;
@@ -141,7 +161,6 @@ export class TindeqBleDriver {
         this.log("Explorando servicios GATT disponibles en el dispositivo...", "info");
         let isTindeqFound = false;
 
-        // Try fetching Tindeq Primary Service & Characteristics
         try {
             this.service = await this.server.getPrimaryService(TINDEQ_UUIDS.SERVICE);
             this.log(`Servicio Tindeq detectado (${TINDEQ_UUIDS.SERVICE}).`, "success");
@@ -149,31 +168,38 @@ export class TindeqBleDriver {
             this.controlChar = await this.service.getCharacteristic(TINDEQ_UUIDS.CONTROL_CHAR);
             this.dataChar = await this.service.getCharacteristic(TINDEQ_UUIDS.DATA_CHAR);
 
+            if (this.tracer) this.tracer.setStepStatus(4, 'success');
+            if (this.tracer) this.tracer.setStepStatus(5, 'running');
+
             // Attach listener BEFORE starting notifications
             this.dataChar.addEventListener('characteristicvaluechanged', this._boundHandleNotifications);
             await this.dataChar.startNotifications();
+
+            if (this.tracer) this.tracer.setStepStatus(5, 'success');
 
             this.isGenericDevice = false;
             isTindeqFound = true;
             this.log("Características de Tindeq configuradas. Listo para medir fuerza.", "success");
         } catch (errTindeq) {
             this.isGenericDevice = true;
+            if (this.tracer) this.tracer.setStepStatus(4, 'fail', 'Servicio Tindeq no expuesto');
             this.log(`Nota: El dispositivo "${this.device.name || 'BLE'}" no expuso el servicio principal Tindeq (${errTindeq.message}). Modo Inspector BLE genérico activo.`, "warning");
         }
 
-        // If Tindeq characteristics were found, attempt reading initial metadata safely
         if (isTindeqFound) {
+            if (this.tracer) this.tracer.setStepStatus(6, 'running');
             try {
                 await this.getFirmwareVersion();
                 await new Promise(r => setTimeout(r, 350));
                 await this.getBatteryVoltage();
+                if (this.tracer) this.tracer.setStepStatus(6, 'success');
             } catch (eMeta) {
+                if (this.tracer) this.tracer.setStepStatus(6, 'fail', eMeta.message);
                 this.log(`Nota al leer metadatos iniciales: ${eMeta.message}`, "debug");
             }
             return;
         }
 
-        // Try reading battery service if available on generic device (like phones/watches)
         try {
             const battService = await this.server.getPrimaryService('battery_service');
             const battChar = await battService.getCharacteristic('battery_level');
@@ -262,12 +288,23 @@ export class TindeqBleDriver {
     }
 
     async startMeasurement() {
+        if (this.tracer) this.tracer.setStepStatus(7, 'running');
+
         this.log("Iniciando MEDICIÓN CONTINUA (~80 Hz)...", "info");
         this.hasLoggedFirstSample = false;
-        await this.sendCommand(TINDEQ_COMMANDS.START_WEIGHT_MEAS);
-        this.isMeasuring = true;
-        if (this.onStatusChange) {
-            this.onStatusChange({ connected: true, measuring: true, deviceName: this.device?.name });
+        
+        try {
+            await this.sendCommand(TINDEQ_COMMANDS.START_WEIGHT_MEAS);
+            this.isMeasuring = true;
+            if (this.tracer) this.tracer.setStepStatus(7, 'success');
+            if (this.tracer) this.tracer.setStepStatus(8, 'running');
+
+            if (this.onStatusChange) {
+                this.onStatusChange({ connected: true, measuring: true, deviceName: this.device?.name });
+            }
+        } catch (err) {
+            if (this.tracer) this.tracer.setStepStatus(7, 'fail', err.message);
+            throw err;
         }
     }
 
@@ -275,6 +312,10 @@ export class TindeqBleDriver {
         this.log("Deteniendo MEDICIÓN CONTINUA...", "info");
         await this.sendCommand(TINDEQ_COMMANDS.STOP_WEIGHT_MEAS);
         this.isMeasuring = false;
+        if (this.tracer && this.tracer.stepState[8].status === 'running') {
+            this.tracer.setStepStatus(8, 'success', 'Medición finalizada');
+        }
+
         if (this.onStatusChange) {
             this.onStatusChange({ connected: true, measuring: false, deviceName: this.device?.name });
         }
@@ -340,6 +381,7 @@ export class TindeqBleDriver {
                     if (!this.hasLoggedFirstSample) {
                         this.log(`Telemetría en tiempo real activa: recibiendo lecturas a 80 Hz (Primera muestra: ${samples[0].weightKg.toFixed(2)} kg)`, "success");
                         this.hasLoggedFirstSample = true;
+                        if (this.tracer) this.tracer.setStepStatus(8, 'success', '80 Hz Activo');
                     }
 
                     if (this.onWeightData) {
@@ -357,11 +399,6 @@ export class TindeqBleDriver {
             case TINDEQ_RESPONSES.LOW_PWR_WARNING: {
                 this.log("ALERTA: Voltaje de batería críticamente bajo.", "warning");
                 if (this.onLowBatteryWarning) this.onLowBatteryWarning();
-                break;
-            }
-
-            default: {
-                this.log(`Notificación no clasificada recibida: Código ${responseCode}, Bytes ${dataView.byteLength}`, "debug");
                 break;
             }
         }

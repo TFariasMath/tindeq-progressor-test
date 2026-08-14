@@ -1,17 +1,19 @@
 /**
  * Tindeq Progressor Web Application Orchestrator (Hardened Edition)
- * Connects BLE Driver / Software Simulator with Canvas Chart Engine,
- * computes real-time athletic metrics, exports telemetry and handles automated Self-Test routines.
+ * Connects BLE Driver / Software Simulator with Canvas Chart Engine & BleProcessTracer,
+ * computes real-time athletic metrics, exports telemetry and diagnostic JSON traces.
  */
 
 import { TindeqBleDriver } from './tindeq-ble.js';
 import { TindeqMockDriver } from './tindeq-mock.js';
 import { ForceChartEngine } from './chart-engine.js';
+import { BleProcessTracer, TRACER_STEPS } from './process-tracer.js';
 
 class TindeqApp {
     constructor() {
         this.driver = null;
         this.chartEngine = null;
+        this.tracer = new BleProcessTracer();
         
         // App State
         this.selectedMode = 'mock'; // Default mock for dev
@@ -32,6 +34,7 @@ class TindeqApp {
 
         this.initDOM();
         this.initChart();
+        this.initTracerUi();
         this.setDriverMode(this.selectedMode);
     }
 
@@ -41,6 +44,9 @@ class TindeqApp {
             statusPill: document.getElementById('statusPill'),
             statusText: document.getElementById('statusText'),
             
+            stepperGrid: document.getElementById('stepperGrid'),
+            btnDownloadDiagnosticJson: document.getElementById('btnDownloadDiagnosticJson'),
+
             btnConnect: document.getElementById('btnConnect'),
             btnConnectText: document.getElementById('btnConnectText'),
             btnTare: document.getElementById('btnTare'),
@@ -86,6 +92,8 @@ class TindeqApp {
         this.elements.btnExportCsv.addEventListener('click', () => this.exportCsv());
         this.elements.btnClearChart.addEventListener('click', () => this.clearSessionData());
         
+        this.elements.btnDownloadDiagnosticJson.addEventListener('click', () => this.downloadDiagnosticJson());
+
         // Edge Case simulator triggers
         this.elements.btnSimulateDisconnect.addEventListener('click', () => {
             if (this.driver && typeof this.driver.triggerUnexpectedDisconnect === 'function') {
@@ -116,6 +124,38 @@ class TindeqApp {
         this.chartEngine.startRenderLoop();
     }
 
+    initTracerUi() {
+        this.tracer.onStepUpdate = (stepStates) => {
+            this.renderStepperUi(stepStates);
+        };
+        this.renderStepperUi(this.tracer.stepState);
+    }
+
+    renderStepperUi(stepStates) {
+        const grid = this.elements.stepperGrid;
+        if (!grid) return;
+
+        let html = '';
+        for (let i = 1; i <= 8; i++) {
+            const st = stepStates[i];
+            const statusClass = st.status || 'idle';
+            const detailText = st.detail ? ` (${st.detail})` : (st.timestamp ? ` - ${st.timestamp}` : '');
+
+            html += `
+                <div class="step-card ${statusClass}" title="${st.desc}">
+                    <div class="step-card-header">
+                        <span class="step-num">PASO 0${i}</span>
+                        <span class="step-status-dot"></span>
+                    </div>
+                    <div class="step-name">${st.name}</div>
+                    <div class="step-desc">${st.desc}${detailText}</div>
+                </div>
+            `;
+        }
+
+        grid.innerHTML = html;
+    }
+
     setDriverMode(mode) {
         if (this.driver && this.driver.isConnected) {
             alert("Desconecta el dispositivo antes de cambiar el modo de operación.");
@@ -124,6 +164,8 @@ class TindeqApp {
         }
 
         this.selectedMode = mode;
+        this.tracer.reset();
+
         if (mode === 'ble' || mode === 'ble-any') {
             this.driver = new TindeqBleDriver();
             this.elements.edgeCasePanel.style.display = 'none';
@@ -135,6 +177,7 @@ class TindeqApp {
             this.addLogEntry({ time: new Date().toLocaleTimeString(), text: 'Modo activo: Simulador de Software (Dev sin Tindeq)', type: 'info' });
         }
 
+        this.driver.tracer = this.tracer;
         this.bindDriverEvents();
         this.updateUiState();
     }
@@ -233,6 +276,22 @@ class TindeqApp {
             await this.driver.enterSleep();
             this.updateUiState();
         }
+    }
+
+    downloadDiagnosticJson() {
+        const jsonStr = this.tracer.exportDiagnosticJson();
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tindeq_diagnostic_trace_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        this.addLogEntry({ time: new Date().toLocaleTimeString(), text: 'Informe de traza completa descargado (JSON)', type: 'success' });
     }
 
     processIncomingSamples(samples) {

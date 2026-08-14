@@ -138,48 +138,51 @@ export class TindeqBleDriver {
      * Inspect GATT services and attempt to initialize Tindeq characteristics if present
      */
     async _inspectDeviceServices() {
+        this.log("Explorando servicios GATT disponibles en el dispositivo...", "info");
+        let isTindeqFound = false;
+
+        // Try fetching Tindeq Primary Service & Characteristics
         try {
-            this.log("Explorando servicios GATT disponibles en el dispositivo...", "info");
+            this.service = await this.server.getPrimaryService(TINDEQ_UUIDS.SERVICE);
+            this.log(`Servicio Tindeq detectado (${TINDEQ_UUIDS.SERVICE}).`, "success");
             
-            // Try fetching Tindeq Primary Service
+            this.controlChar = await this.service.getCharacteristic(TINDEQ_UUIDS.CONTROL_CHAR);
+            this.dataChar = await this.service.getCharacteristic(TINDEQ_UUIDS.DATA_CHAR);
+
+            // Attach listener BEFORE starting notifications
+            this.dataChar.addEventListener('characteristicvaluechanged', this._boundHandleNotifications);
+            await this.dataChar.startNotifications();
+
+            this.isGenericDevice = false;
+            isTindeqFound = true;
+            this.log("Características de Tindeq configuradas. Listo para medir fuerza.", "success");
+        } catch (errTindeq) {
+            this.isGenericDevice = true;
+            this.log(`Nota: El dispositivo "${this.device.name || 'BLE'}" no expuso el servicio principal Tindeq (${errTindeq.message}). Modo Inspector BLE genérico activo.`, "warning");
+        }
+
+        // If Tindeq characteristics were found, attempt reading initial metadata safely
+        if (isTindeqFound) {
             try {
-                this.service = await this.server.getPrimaryService(TINDEQ_UUIDS.SERVICE);
-                this.log(`Servicio Tindeq detectado (${TINDEQ_UUIDS.SERVICE}).`, "success");
-                
-                this.controlChar = await this.service.getCharacteristic(TINDEQ_UUIDS.CONTROL_CHAR);
-                this.dataChar = await this.service.getCharacteristic(TINDEQ_UUIDS.DATA_CHAR);
-
-                // Attach listener BEFORE starting notifications to catch initial packets
-                this.dataChar.addEventListener('characteristicvaluechanged', this._boundHandleNotifications);
-                await this.dataChar.startNotifications();
-
-                this.isGenericDevice = false;
-                this.log("Características de Tindeq configuradas. Listo para medir fuerza.", "success");
-
                 await this.getFirmwareVersion();
                 await new Promise(r => setTimeout(r, 350));
                 await this.getBatteryVoltage();
-                return;
-            } catch (errTindeq) {
-                // Device does not have Tindeq service (e.g. Phone, Watch, Headphones)
-                this.isGenericDevice = true;
-                this.log(`Nota: El dispositivo "${this.device.name || 'BLE'}" no contiene el servicio específico Tindeq. Modo Inspector BLE genérico activo.`, "warning");
+            } catch (eMeta) {
+                this.log(`Nota al leer metadatos iniciales: ${eMeta.message}`, "debug");
             }
+            return;
+        }
 
-            // Try reading battery service if available on generic device (like phones/watches)
-            try {
-                const battService = await this.server.getPrimaryService('battery_service');
-                const battChar = await battService.getCharacteristic('battery_level');
-                const battValue = await battChar.readValue();
-                const percent = battValue.getUint8(0);
-                this.log(`Lectura de Batería BLE del Dispositivo: ${percent}%`, "info");
-                if (this.onBatteryRead) this.onBatteryRead({ millivolts: 3000, percent });
-            } catch (e) {
-                this.log("Servicio de batería estándar no expuesto por el dispositivo.", "debug");
-            }
-
-        } catch (err) {
-            this.log(`Error al inspeccionar servicios GATT: ${err.message}`, "warning");
+        // Try reading battery service if available on generic device (like phones/watches)
+        try {
+            const battService = await this.server.getPrimaryService('battery_service');
+            const battChar = await battService.getCharacteristic('battery_level');
+            const battValue = await battChar.readValue();
+            const percent = battValue.getUint8(0);
+            this.log(`Lectura de Batería BLE del Dispositivo: ${percent}%`, "info");
+            if (this.onBatteryRead) this.onBatteryRead({ millivolts: 3000, percent });
+        } catch (e) {
+            this.log("Servicio de batería estándar no expuesto por el dispositivo.", "debug");
         }
     }
 
@@ -224,8 +227,8 @@ export class TindeqBleDriver {
         if (!this.isConnected) {
             throw new Error("No hay conexión activa con el dispositivo.");
         }
-        if (this.isGenericDevice || !this.controlChar) {
-            this.log(`Dispositivo BLE genérico sin Control Point Tindeq. Comando 0x${cmdByte.toString(16)} omitido.`, "warning");
+        if (!this.controlChar) {
+            this.log(`Control Point Tindeq no disponible. Comando 0x${cmdByte.toString(16)} omitido.`, "warning");
             return;
         }
 
@@ -234,10 +237,10 @@ export class TindeqBleDriver {
         const props = this.controlChar.properties || {};
 
         try {
-            if (props.write && typeof this.controlChar.writeValueWithResponse === 'function') {
-                await this.controlChar.writeValueWithResponse(buffer);
-            } else if (props.writeWithoutResponse && typeof this.controlChar.writeValueWithoutResponse === 'function') {
+            if (props.writeWithoutResponse && typeof this.controlChar.writeValueWithoutResponse === 'function') {
                 await this.controlChar.writeValueWithoutResponse(buffer);
+            } else if (props.write && typeof this.controlChar.writeValueWithResponse === 'function') {
+                await this.controlChar.writeValueWithResponse(buffer);
             } else {
                 await this.controlChar.writeValue(buffer);
             }

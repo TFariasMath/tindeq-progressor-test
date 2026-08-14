@@ -148,8 +148,9 @@ export class TindeqBleDriver {
                 this.controlChar = await this.service.getCharacteristic(TINDEQ_UUIDS.CONTROL_CHAR);
                 this.dataChar = await this.service.getCharacteristic(TINDEQ_UUIDS.DATA_CHAR);
 
-                await this.dataChar.startNotifications();
+                // Attach listener BEFORE starting notifications to catch initial packets
                 this.dataChar.addEventListener('characteristicvaluechanged', this._boundHandleNotifications);
+                await this.dataChar.startNotifications();
 
                 this.isGenericDevice = false;
                 this.log("Características de Tindeq configuradas. Listo para medir fuerza.", "success");

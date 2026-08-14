@@ -46,6 +46,7 @@ export class TindeqBleDriver {
         this.isMeasuring = false;
         this.lastRequestedCmd = null;
         this.isGenericDevice = false;
+        this.hasLoggedFirstSample = false;
 
         // Callback listeners
         this.onLog = null;
@@ -259,6 +260,7 @@ export class TindeqBleDriver {
 
     async startMeasurement() {
         this.log("Iniciando MEDICIÓN CONTINUA (~80 Hz)...", "info");
+        this.hasLoggedFirstSample = false;
         await this.sendCommand(TINDEQ_COMMANDS.START_WEIGHT_MEAS);
         this.isMeasuring = true;
         if (this.onStatusChange) {
@@ -307,7 +309,7 @@ export class TindeqBleDriver {
             await new Promise(r => setTimeout(r, 3000));
             
             await this.stopMeasurement();
-            this.log("PRUEBA DE DIAGNÓSTICO COMPLETADA CON ÉXITO.", "success");
+            this.log("PRUEBA DE DIAGNÓSTICO FINALIZADA. Haz clic en 'Iniciar Medición' para medir continuamente.", "success");
             return true;
         } catch (e) {
             this.log(`FALLO EN DIAGNÓSTICO AUTOMÁTICO: ${e.message}`, "error");
@@ -331,8 +333,15 @@ export class TindeqBleDriver {
                     samples.push({ weightKg, timestampUs });
                 }
 
-                if (samples.length > 0 && this.onWeightData) {
-                    this.onWeightData(samples);
+                if (samples.length > 0) {
+                    if (!this.hasLoggedFirstSample) {
+                        this.log(`Telemetría en tiempo real activa: recibiendo lecturas a 80 Hz (Primera muestra: ${samples[0].weightKg.toFixed(2)} kg)`, "success");
+                        this.hasLoggedFirstSample = true;
+                    }
+
+                    if (this.onWeightData) {
+                        this.onWeightData(samples);
+                    }
                 }
                 break;
             }
@@ -345,6 +354,11 @@ export class TindeqBleDriver {
             case TINDEQ_RESPONSES.LOW_PWR_WARNING: {
                 this.log("ALERTA: Voltaje de batería críticamente bajo.", "warning");
                 if (this.onLowBatteryWarning) this.onLowBatteryWarning();
+                break;
+            }
+
+            default: {
+                this.log(`Notificación no clasificada recibida: Código ${responseCode}, Bytes ${dataView.byteLength}`, "debug");
                 break;
             }
         }
